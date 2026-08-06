@@ -43,7 +43,7 @@ User question
 2. Get a free Groq API key at [console.groq.com](https://console.groq.com) (no credit card)
 3. Paste the key in the sidebar
 4. Upload any PDF
-5. Ask questions — expand the **🧠 Reasoning trace** to see every agent decision
+5. Ask questions — expand the ** Reasoning trace** to see every agent decision
 
 > **The reasoning trace is the most interesting part.** You can see exactly which nodes
 > ran, whether the grader triggered a retry, and what the rephrased query was.
