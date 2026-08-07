@@ -3,7 +3,7 @@
 > A production-grade RAG chatbot built with LangGraph that self-corrects poor retrievals
 > instead of hallucinating, and shows its full reasoning trace for every answer.
 
-🔗 **Live Demo:** [your-app.streamlit.app](https://your-app.streamlit.app)
+🔗 **Live Demo:** [https://agentic-rag-tnpqnavtchvxixquwvnthx.streamlit.app/]
 
 ---
 
