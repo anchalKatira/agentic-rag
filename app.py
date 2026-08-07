@@ -363,9 +363,8 @@ def render_trace(steps: list):
 
 
 def render_message(role: str, content: str, sources=None, steps=None):
-    """Render a single chat message with optional trace and sources."""
-    label    = "You" if role == "user" else "Agent"
-    cls      = "user" if role == "user" else "bot"
+    label = "You" if role == "user" else "Agent"
+    cls   = "user" if role == "user" else "bot"
 
     st.markdown(f"""
     <div class="msg-wrap">
@@ -375,23 +374,47 @@ def render_message(role: str, content: str, sources=None, steps=None):
     """, unsafe_allow_html=True)
 
     if steps and role == "assistant":
-        has_retry = any("attempt 2" in s.lower() or "attempt 3" in s.lower() for s in steps)
+        has_retry    = any("attempt 2" in s.lower() or "attempt 3" in s.lower() for s in steps)
         has_fallback = any("fallback" in s.lower() for s in steps)
-        label_extra = " ↺ self-corrected" if has_retry else (" ⚠ fallback" if has_fallback else "")
+        label_extra  = " ↺ self-corrected" if has_retry else (" ⚠ fallback" if has_fallback else "")
 
         with st.expander(f"🧠 Reasoning trace ({len(steps)} steps){label_extra}"):
-            st.markdown(render_trace(steps), unsafe_allow_html=True)
+            for i, step in enumerate(steps):
+                # Parse node name and content
+                parts     = step.split("→", 1)
+                node_name = parts[0].strip().split("(")[0].strip()
+                detail    = parts[1].strip() if len(parts) > 1 else step
+
+                # Pick emoji per node
+                icons = {
+                    "Router":    "🔀",
+                    "Retriever": "🔍",
+                    "Grader":    "⚖️",
+                    "Rephrase":  "✏️",
+                    "Answer":    "✅",
+                    "Fallback":  "⚠️",
+                    "Direct":    "💬",
+                }
+                icon = icons.get(node_name, "▸")
+
+                # Retry indicator
+                retry_tag = " ↺ retry" if ("attempt 2" in step.lower() or "attempt 3" in step.lower()) else ""
+
+                st.markdown(
+                    f"**{i+1}. {icon} {node_name}**{retry_tag}  \n"
+                    f"<span style='color:#72728a;font-size:.85rem'>{detail}</span>",
+                    unsafe_allow_html=True
+                )
+                if i < len(steps) - 1:
+                    st.markdown("---")
 
     if sources and role == "assistant":
         with st.expander(f"📎 {len(sources)} source chunk(s) used"):
             for i, doc in enumerate(sources):
                 pg   = doc.metadata.get("page", "?")
                 text = doc.page_content.strip()[:350]
-                st.markdown(
-                    f'<div style="font-size:.75rem;color:var(--muted);margin-bottom:2px">Chunk {i+1} · page {pg}</div>'
-                    f'<div class="src-chunk">{text}{"…" if len(doc.page_content)>350 else ""}</div>',
-                    unsafe_allow_html=True
-                )
+                st.markdown(f"**Chunk {i+1} · page {pg}**")
+                st.code(text, language=None)
 
 
 # ─────────────────────────────────────────────────────────────
