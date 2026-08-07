@@ -215,11 +215,22 @@ Be decisive. Default to 'retrieve'."""),
 ]) | llm.with_structured_output(RouteDecision)
 
     grader_chain = ChatPromptTemplate.from_messages([
-        ("system", """You are a document relevance grader.
-Grade 'good' only if chunks genuinely help answer the question.
-A chunk mentioning a keyword but not answering is still 'bad'."""),
-        ("human", "Question: {question}\n\nChunks:\n{context}")
-    ]) | llm.with_structured_output(GradeDecision)
+    ("system", """You are a document relevance grader.
+Grade the retrieved chunks as 'good' or 'bad'.
+
+Grade 'good' if:
+- The chunks contain ANY information related to the question
+- The chunks mention the topic or concept being asked about
+- The chunks provide partial information that helps answer the question
+
+Grade 'bad' ONLY if:
+- The chunks are completely unrelated to the question
+- The chunks are about a totally different topic
+
+Be LENIENT. If there is any relevant information, grade 'good'.
+When in doubt → grade 'good'."""),
+    ("human", "Question: {question}\n\nChunks:\n{context}")
+]) | llm.with_structured_output(GradeDecision)
 
     rephrase_chain = ChatPromptTemplate.from_messages([
         ("system", """Rewrite the question using technical vocabulary
