@@ -198,12 +198,21 @@ def build_graph(vectorstore: FAISS, api_key: str):
 
     # ── Prompts ────────────────────────────────────────────────
     router_chain = ChatPromptTemplate.from_messages([
-        ("system", """Route the question.
-'retrieve' = question needs information from the uploaded document.
-'direct'   = general knowledge question not needing the document.
-Be decisive."""),
-        ("human", "Question: {question}")
-    ]) | llm.with_structured_output(RouteDecision)
+    ("system", """You are a router for a document Q&A system.
+The user has uploaded a PDF document and is asking questions about it.
+
+ALWAYS choose 'retrieve' UNLESS the question is clearly about general world knowledge
+that has nothing to do with any document (e.g. "what is 2+2", "who is the president").
+
+Rules:
+- If the question could possibly be answered from a document → 'retrieve'
+- If the question asks about concepts, topics, definitions → 'retrieve'
+- If the question is purely general knowledge with zero relation to documents → 'direct'
+- When in doubt → ALWAYS choose 'retrieve'
+
+Be decisive. Default to 'retrieve'."""),
+    ("human", "Question: {question}")
+]) | llm.with_structured_output(RouteDecision)
 
     grader_chain = ChatPromptTemplate.from_messages([
         ("system", """You are a document relevance grader.
