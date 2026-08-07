@@ -151,12 +151,21 @@ def ingest_pdf(pdf_bytes: bytes) -> tuple:
     finally:
         os.unlink(tmp)
 
+    # Filter out empty pages
+    pages = [p for p in pages if p.page_content.strip()]
+
     if not pages:
         raise ValueError("No text extracted. PDF may be scanned/image-based.")
 
     chunks = RecursiveCharacterTextSplitter(
         chunk_size=500, chunk_overlap=50
     ).split_documents(pages)
+
+    # Filter out empty chunks
+    chunks = [c for c in chunks if c.page_content.strip()]
+
+    if not chunks:
+        raise ValueError("No usable content found in PDF.")
 
     em = load_embedding_model()
     vs = FAISS.from_documents(chunks, em)
