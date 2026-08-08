@@ -185,63 +185,51 @@ def build_graph(vectorstore: FAISS, api_key: str):
     )
 
     # ── Structured output schemas ──────────────────────────────
+    # ── Structured output schemas ──────────────────────────────
     class RouteDecision(BaseModel):
         route: Literal["retrieve", "direct"] = Field(
-            description="'retrieve' for document-specific questions, 'direct' for general knowledge"
+            description="routing decision"
         )
 
     class GradeDecision(BaseModel):
         grade:  Literal["good", "bad"] = Field(
-            description="'good' if chunks contain relevant info, 'bad' if not"
+            description="relevance grade"
         )
-        reason: str = Field(description="One sentence explaining the grade")
+        reason: str = Field(description="reason")
 
     # ── Prompts ────────────────────────────────────────────────
-    router_chain = ChatPromptTemplate.from_messages([
-    ("system", """You are a router for a document Q&A system.
-The user has uploaded a PDF document and is asking questions about it.
-
-ALWAYS choose 'retrieve' UNLESS the question is clearly about general world knowledge
-that has nothing to do with any document (e.g. "what is 2+2", "who is the president").
-
-Rules:
-- If the question could possibly be answered from a document → 'retrieve'
-- If the question asks about concepts, topics, definitions → 'retrieve'
-- If the question is purely general knowledge with zero relation to documents → 'direct'
-- When in doubt → ALWAYS choose 'retrieve'
-
-Be decisive. Default to 'retrieve'."""),
-    ("human", "Question: {question}")
-]) | llm.with_structured_output(RouteDecision)
-
     grader_chain = ChatPromptTemplate.from_messages([
-    ("system", """You are a document relevance grader.
-Grade the retrieved chunks as 'good' or 'bad'.
+        ("system",
+         """You are grading document chunks for relevance.
+         
+Grade 'good' if the chunks contain ANY of these:
+- The topic or concept mentioned in the question
+- Related technical terms
+- Partial information about the subject
+- Background information that helps answer
 
-Grade 'good' if:
-- The chunks contain ANY information related to the question
-- The chunks mention the topic or concept being asked about
-- The chunks provide partial information that helps answer the question
+Grade 'bad' ONLY if chunks are about a completely different subject with zero overlap.
 
-Grade 'bad' ONLY if:
-- The chunks are completely unrelated to the question
-- The chunks are about a totally different topic
-
-Be LENIENT. If there is any relevant information, grade 'good'.
-When in doubt → grade 'good'."""),
-    ("human", "Question: {question}\n\nChunks:\n{context}")
-]) | llm.with_structured_output(GradeDecision)
+DEFAULT to 'good' unless chunks are totally irrelevant."""),
+        ("human", "Question: {question}\n\nChunks:\n{context}")
+    ]) | llm.with_structured_output(GradeDecision)
 
     rephrase_chain = ChatPromptTemplate.from_messages([
-        ("system", """Rewrite the question using technical vocabulary
-that better matches a research paper. 5-10 words. Return ONLY the rephrased question."""),
-        ("human", "Original: {question}\n\nRephrased:")
+        ("system",
+         """Rewrite the question using different technical keywords
+for better document search. Return ONLY the rewritten question, 5-10 words."""),
+        ("human", "Original: {question}\n\nRewritten:")
     ]) | llm
 
     rag_prompt = ChatPromptTemplate.from_messages([
-        ("system", """Answer using ONLY the provided context.
-If insufficient, say so clearly. Keep answers concise.
-Context:\n{context}"""),
+        ("system",
+         """Answer using the provided document context.
+Use the context as your PRIMARY source.
+If context partially answers, give what you can and note gaps.
+Do NOT say the information is not available if context is partially relevant.
+
+Context:
+{context}"""),
         ("human", "{question}")
     ])
 
@@ -252,70 +240,127 @@ Context:\n{context}"""),
 
     # ── Nodes ──────────────────────────────────────────────────
     def router_node(state: AgentState) -> dict:
-        d    = router_chain.invoke({"question": state["question"]})
-        step = f"Router → {d.route}"
-        return {"route": d.route, "retry_count": 0,
-                "steps": state.get("steps", []) + [step]}
+        # Always retrieve — user uploaded PDF to ask about it
+        step = "Router → retrieve (document Q&A mode)"
+        return {
+            "route":       "retrieve",
+            "retry_count": 0,
+            "steps":       state.get("steps", []) + [step]
+        }
 
     def retriever_node(state: AgentState) -> dict:
         rc    = state.get("retry_count", 0)
-        query = state["rephrased_question"] if (rc > 0 and state.get("rephrased_question")) else state["question"]
+        query = (state["rephrased_question"]
+                 if rc > 0 and state.get("rephrased_question")
+                 else state["question"])
         src   = "rephrased" if rc > 0 else "original"
-        docs  = vectorstore.similarity_search(query, k=3)
-        pages = [str(d.metadata.get("page","?")) for d in docs]
-        step  = f"Retriever (attempt {rc+1}, {src}) → {len(docs)} chunks, pages {', '.join(pages)}"
-        return {"documents": docs, "steps": state.get("steps", []) + [step]}
+        docs  = vectorstore.similarity_search(query, k=4)
+        pages = [str(d.metadata.get("page", "?")) for d in docs]
+        step  = f"Retriever (attempt {rc+1}, {src}) → {len(docs)} chunks from pages {', '.join(pages)}"
+        return {
+            "documents": docs,
+            "steps":     state.get("steps", []) + [step]
+        }
 
     def grader_node(state: AgentState) -> dict:
+        docs = state["documents"]
+        if not docs:
+            return {"grade": "bad",
+                    "steps": state.get("steps", []) + ["Grader → 'bad' | no documents retrieved"]}
+
         ctx = "\n\n".join([
-            f"[Chunk {i+1}, Page {d.metadata.get('page','?')}]:\n{d.page_content[:300]}"
-            for i, d in enumerate(state["documents"])
+            f"[Chunk {i+1}, Page {d.metadata.get('page','?')}]:\n{d.page_content[:400]}"
+            for i, d in enumerate(docs)
         ])
         d    = grader_chain.invoke({"question": state["question"], "context": ctx})
         step = f"Grader → '{d.grade}' | {d.reason}"
         return {"grade": d.grade, "steps": state.get("steps", []) + [step]}
 
     def rephrase_node(state: AgentState) -> dict:
-        rc       = state.get("retry_count", 0)
-        new_q    = rephrase_chain.invoke({"question": state["question"]}).content.strip()
-        step     = f"Rephrase (attempt {rc+1}/{MAX_RETRIES}) → '{new_q}'"
-        return {"rephrased_question": new_q, "retry_count": rc + 1,
-                "steps": state.get("steps", []) + [step]}
+        rc    = state.get("retry_count", 0)
+        new_q = rephrase_chain.invoke({"question": state["question"]}).content.strip()
+        step  = f"Rephrase (attempt {rc+1}/{MAX_RETRIES}) → '{new_q}'"
+        return {
+            "rephrased_question": new_q,
+            "retry_count":        rc + 1,
+            "steps":              state.get("steps", []) + [step]
+        }
 
     def answer_node(state: AgentState) -> dict:
         docs = state.get("documents", [])
         if docs:
-            ctx  = "\n\n".join([f"[Page {d.metadata.get('page','?')}]: {d.page_content.strip()}" for d in docs])
-            resp = (rag_prompt | llm).invoke({"context": ctx, "question": state["question"]})
+            ctx  = "\n\n".join([
+                f"[Page {d.metadata.get('page','?')}]: {d.page_content.strip()}"
+                for d in docs
+            ])
+            resp = (rag_prompt | llm).invoke({
+                "context":  ctx,
+                "question": state["question"]
+            })
             mode = "RAG"
         else:
             resp = (direct_prompt | llm).invoke({"question": state["question"]})
             mode = "Direct"
+
         answer  = resp.content
-        history = state.get("chat_history", []) + [{"question": state["question"], "answer": answer, "sources": state.get("documents", []), "steps": state.get("steps", [])}]
-        step    = f"Answer ({mode}) → {len(answer)} chars"
-        return {"answer": answer, "chat_history": history, "steps": state.get("steps", []) + [step]}
+        history = state.get("chat_history", []) + [{
+            "question": state["question"],
+            "answer":   answer,
+            "sources":  state.get("documents", []),
+            "steps":    state.get("steps", [])
+        }]
+        step = f"Answer ({mode}) → {len(answer)} chars"
+        return {
+            "answer":       answer,
+            "chat_history": history,
+            "steps":        state.get("steps", []) + [step]
+        }
 
     def direct_answer_node(state: AgentState) -> dict:
         return answer_node({**state, "documents": []})
 
     def fallback_node(state: AgentState) -> dict:
-        rc      = state.get("retry_count", 0)
-        answer  = (f"I searched the document {rc} time(s) with different phrasings "
-                   f"but couldn't find relevant information for: '{state['question']}'. "
-                   f"This may not be covered in the uploaded document.")
-        history = state.get("chat_history", []) + [{"question": state["question"], "answer": answer, "sources": [], "steps": state.get("steps", [])}]
-        step    = f"Fallback → refused after {rc} attempt(s)"
-        return {"answer": answer, "chat_history": history, "steps": state.get("steps", []) + [step]}
+        # Even on fallback — answer from whatever chunks we have
+        docs = state.get("documents", [])
+        if docs:
+            ctx  = "\n\n".join([
+                f"[Page {d.metadata.get('page','?')}]: {d.page_content.strip()}"
+                for d in docs
+            ])
+            resp = (rag_prompt | llm).invoke({
+                "context":  ctx,
+                "question": state["question"]
+            })
+            answer = resp.content
+            mode   = "RAG fallback"
+        else:
+            answer = (f"I couldn't find specific information about "
+                      f"'{state['question']}' in the document.")
+            mode   = "no chunks"
+
+        history = state.get("chat_history", []) + [{
+            "question": state["question"],
+            "answer":   answer,
+            "sources":  docs,
+            "steps":    state.get("steps", [])
+        }]
+        step = f"Fallback ({mode}) → answered with available context"
+        return {
+            "answer":       answer,
+            "chat_history": history,
+            "steps":        state.get("steps", []) + [step]
+        }
 
     # ── Conditional edges ─────────────────────────────────────
     def route_decision(state):
-        return "retriever" if state.get("route") == "retrieve" else "direct_answer"
+        return "retriever"   # always retrieve
 
     def grade_decision(state):
-        if state.get("grade") == "good":     return "answer"
-        if state.get("retry_count",0) < MAX_RETRIES: return "rephrase"
-        return "fallback"
+        if state.get("grade") == "good":
+            return "answer"
+        if state.get("retry_count", 0) < MAX_RETRIES:
+            return "rephrase"
+        return "fallback"   # fallback now answers from chunks, not refuses
 
     # ── Assemble ──────────────────────────────────────────────
     g = StateGraph(AgentState)
