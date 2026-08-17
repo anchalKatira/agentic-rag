@@ -108,7 +108,7 @@ html,body,[class*="css"]{font-family:'DM Sans',sans-serif;background:var(--bg);c
 # CONSTANTS
 # ─────────────────────────────────────────────────────────────
 MAX_RETRIES = 2
-MODEL       = "llama-3.1-8b-instant"
+MODEL       = "llama-3.3-70b-versatile"
 
 
 # ─────────────────────────────────────────────────────────────
