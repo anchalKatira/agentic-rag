@@ -2,7 +2,7 @@
 
 > A production-grade RAG system built with LangGraph that self-corrects poor retrievals instead of hallucinating, and shows its full reasoning trace for every answer.
 
-🔗 **Live Demo:** [your-app.streamlit.app]([https://agentic-rag-tnpqnavtchvxixquwvnthx.streamlit.app])
+🔗 **Live Demo:** [your-app.streamlit.app](https://agentic-rag-tnpqnavtchvxixquwvnthx.streamlit.app/)
 
 ---
 
@@ -20,7 +20,7 @@
 
 ## How to Use
 
-1. Open the **[Live Demo]([https://agentic-rag-tnpqnavtchvxixquwvnthx.streamlit.app])**
+1. Open the **[Live Demo](https://agentic-rag-tnpqnavtchvxixquwvnthx.streamlit.app/)**
 2. Upload any text-based PDF using the sidebar
 3. Ask questions — the agent answers from the document
 4. Expand **🧠 Reasoning trace** to see every decision the agent made
