@@ -221,13 +221,10 @@ On Streamlit Community Cloud the filesystem is ephemeral: `chroma_db/` survives 
 
 ---
 
-## Roadmap
+## Next steps
 
 - Hybrid search (BM25 + vectors) and a reranker
 - `SqliteSaver` for chat memory that survives restarts
 - Multi-document Q&A across collections
 - Ragas-style LLM-judged faithfulness metrics in `evaluation/`
 
----
-
-*Built as Week 2 of a structured AI/ML project series — directly replicating patterns from the Oracle AI Developer Hub enterprise RAG systems.*
