@@ -5,8 +5,9 @@ langchain-core
 langchain-text-splitters
 langchain-huggingface
 langchain-groq
+langchain-chroma
 langgraph
-faiss-cpu
+chromadb
 sentence-transformers
 pypdf
 pydantic

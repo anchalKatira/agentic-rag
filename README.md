@@ -1,32 +1,53 @@
 # Agentic RAG 🤖 — Self-Correcting Document Q&A
 
-> A production-grade RAG system built with LangGraph that self-corrects poor retrievals instead of hallucinating, and shows its full reasoning trace for every answer.
+> A production-style RAG system built with LangGraph that self-corrects poor retrievals instead of hallucinating, shows its full reasoning trace for every answer, and stores document vectors in a **persistent ChromaDB** database.
 
-🔗 **Live Demo:** [agentic-rag-tnpqnavtchvxixquwvnthx.streamlit.app](https://agentic-rag-tnpqnavtchvxixquwvnthx.streamlit.app)
+🔗 **Live Demo:** [agentic-rag.streamlit.app](https://agentic-rag-tnpqnavtchvxixquwvnthx.streamlit.app/)
 
 ---
 
 ## What makes this different from a basic RAG chatbot
 
-| Basic RAG | Agentic RAG (this project) |
-|---|---|
-| Fixed pipeline — always retrieves | Always retrieves from uploaded document |
-| No quality check on retrieved chunks | Grader node checks relevance before answering |
-| Hallucinates when chunks are irrelevant | Self-corrects: rephrases query + retries |
-| No visibility into reasoning | Full reasoning trace shown per answer |
-| Answers even unanswerable questions | Answers from available chunks even on fallback |
+| Basic RAG                               | Agentic RAG (this project)                    |
+| --------------------------------------- | --------------------------------------------- |
+| Fixed pipeline — always retrieves       | Always retrieves from your uploaded document  |
+| No quality check on retrieved chunks    | Grader node checks relevance before answering |
+| Hallucinates when chunks are irrelevant | Self-corrects: rephrases query + retries      |
+| No visibility into reasoning            | Full reasoning trace shown per answer         |
+| Index rebuilt on every upload / restart | Persistent ChromaDB — ingest once, reuse      |
 
 ---
 
 ## How to Use
 
-1. Open the **[Live Demo](https://agentic-rag-tnpqnavtchvxixquwvnthx.streamlit.app)**
-2. Upload any text-based PDF using the sidebar
+1. Open the **[Live Demo](https://agentic-rag-tnpqnavtchvxixquwvnthx.streamlit.app/)**
+2. Upload any text-based PDF using the sidebar (or load a previously saved one)
 3. Ask questions — the agent answers from the document
-4. Expand **🧠 Reasoning trace** to see every node decision
+4. Expand **🧠 Reasoning trace** to see every decision the agent made
 5. Expand **📎 Source chunks** to verify what the agent actually read
 
-> The app works fully out of the box — no API key setup needed on your end.
+---
+
+## Project Structure
+
+```
+agentic-rag/
+├── app.py                  # Streamlit UI only
+├── requirements.txt
+├── core/
+│   ├── config.py           # model, chunk size, top-k, Chroma path
+│   ├── state.py            # LangGraph AgentState
+│   ├── prompts.py          # grader / rephrase / RAG prompts
+│   ├── embeddings.py       # cached MiniLM embedding model
+│   ├── ingestion.py        # PDF → chunks → ChromaDB
+│   └── agent.py            # LangGraph nodes, edges, run_agent()
+├── db/
+│   └── chroma_store.py     # persistent ChromaDB wrapper
+└── evaluation/
+    ├── metrics.py          # hit rate, MRR, answer keyword hit
+    ├── evaluate.py         # CLI evaluation runner
+    └── sample_dataset.json # template Q/A set — edit with your own
+```
 
 ---
 
@@ -35,71 +56,51 @@
 ```
 User question
       ↓
-[Router] — always retrieves (document Q&A mode)
+[Router] — always retrieves from uploaded document
       ↓
-[Retriever] — FAISS similarity search, top-4 chunks
+[Retriever] — ChromaDB similarity search, top-4 chunks
       ↓
-[Grader] — are chunks relevant to the question?
-      ↓ good                 ↓ bad + retries left      ↓ bad + no retries
-[Answer node]          [Rephrase node]             [Fallback node]
-      ↓                      ↓                          ↓
-Answer from docs     Better technical query      Answer from available
-                            ↓                     chunks anyway
-                     [Retriever] → [Grader]
-                     (self-correction loop,
-                      up to MAX_RETRIES=2)
+[Grader] — are chunks actually relevant to the question?
+      ↓ good                    ↓ bad (retries left)         ↓ bad (no retries)
+[Answer node]             [Rephrase node]                [Fallback node]
+      ↓                         ↓                              ↓
+Final answer          Better technical query        Best-effort answer from
+                             ↓                      the chunks found
+                      [Retriever] → [Grader]
+                      (self-correction loop)
 ```
 
 ---
 
 ## Key Features
 
-**Router node** — always routes to retrieval. Since the user uploaded a PDF specifically to ask questions about it, every question goes through FAISS first. The grader then decides what to do with the results.
+**Grader node** — evaluates whether retrieved chunks genuinely answer the question. A vector store always returns k results even for off-topic queries — the grader catches irrelevant chunks before they reach the LLM.
 
-**Grader node** — evaluates whether retrieved chunks genuinely answer the question. FAISS always returns k results even for off-topic queries — the grader catches irrelevant chunks before they reach the LLM. Grades `good` if any relevant information is found, `bad` only if chunks are completely unrelated.
+**Self-correction loop** — when the grader says bad, the rephrase node rewrites the query using more technical vocabulary that better matches the document's text. The rephrased query goes back to the retriever for a second attempt.
 
-**Self-correction loop** — when the grader says bad, the rephrase node rewrites the query using more technical vocabulary that better matches the document's text. The rephrased query goes back to the retriever for a second attempt. Re-running the same query returns the same chunks — rephrasing makes the retry genuinely different.
+**Reasoning trace** — every answer shows an expandable panel with each node's decision: router verdict, retriever pages, grader verdict and reason, whether rephrasing fired, and the answer mode (RAG or fallback).
 
-**Fallback node** — after MAX_RETRIES (2) failed attempts, the fallback node still tries to answer from whatever chunks were retrieved rather than refusing outright. Only if no chunks exist does it say the information wasn't found.
+**Fallback** — after `MAX_RETRIES` failed attempts, the agent answers from the best chunks it found (or says clearly that nothing relevant exists) instead of making things up.
 
-**Reasoning trace** — every answer shows an expandable panel with each node's decision shown as plain text steps with emoji labels: 🔀 Router, 🔍 Retriever, ⚖️ Grader, ✏️ Rephrase, ✅ Answer, ⚠️ Fallback. Retries are labelled ↺.
+**Persistent vector storage** — document vectors, chunk text and page metadata are saved to disk by ChromaDB. Re-uploading the same PDF (even after a restart) skips parsing and embedding.
 
-**Persistent memory** — MemorySaver checkpointer saves state after every node. Same conversation thread remembers previous turns within a session. New PDF upload generates a fresh UUID as thread_id for a clean start.
+**Conversation memory** — LangGraph `MemorySaver` checkpoints state after every node within a session. Loading a new PDF starts a fresh thread.
 
 ---
 
 ## Tech Stack
 
-| Component | Tool |
-|---|---|
-| UI | Streamlit |
-| Agent framework | LangGraph |
-| LLM | Groq — `openai/gpt-oss-120b` (free) |
-| Embeddings | `sentence-transformers/all-MiniLM-L6-v2` |
-| Vector store | FAISS (top-4 chunks per query) |
-| PDF loading | LangChain `PyPDFLoader` |
-| Text chunking | `RecursiveCharacterTextSplitter` (500 chars, 50 overlap) |
-| Memory | LangGraph `MemorySaver` |
-| Deployment | Streamlit Community Cloud |
-
----
-
-## Agent State
-
-Every node reads from and writes to a shared TypedDict:
-
-```python
-class AgentState(TypedDict):
-    question:           str    # user's original question
-    rephrased_question: str    # rewritten query for retry
-    route:              str    # always 'retrieve'
-    documents:          List   # retrieved FAISS chunks
-    grade:              str    # 'good' or 'bad'
-    answer:             str    # final answer
-    retry_count:        int    # 0, 1, or 2
-    steps:              List   # reasoning trace log
-    chat_history:       List   # memory across turns
-```
+| Component       | Tool                                                   |
+| --------------- | ------------------------------------------------------ |
+| UI              | Streamlit                                              |
+| Agent framework | LangGraph                                              |
+| LLM             | Groq — openai/gpt-oss-120b (free)                      |
+| Embeddings      | sentence-transformers/all-MiniLM-L6-v2 (384-dim)       |
+| Vector store    | **ChromaDB** (persistent, `langchain-chroma`)          |
+| PDF loading     | LangChain PyPDFLoader                                  |
+| Text chunking   | RecursiveCharacterTextSplitter (500 chars, 50 overlap) |
+| Memory          | LangGraph MemorySaver                                  |
+| Deployment      | Streamlit Community Cloud                              |
 
 ---
 
@@ -108,75 +109,125 @@ class AgentState(TypedDict):
 ```
 PDF upload (bytes)
       ↓
-Write to temp file (PyPDFLoader needs a path, not bytes)
+SHA-256 hash of bytes → doc_id
       ↓
-PyPDFLoader → Document objects (one per page)
-      ↓
-Filter empty pages
+Already in ChromaDB? ── yes ──→ load collection from disk (no re-embedding)
+      ↓ no
+PyPDFLoader → one Document per page → drop empty pages
       ↓
 RecursiveCharacterTextSplitter → chunks (500 chars, 50 overlap)
       ↓
-Filter empty chunks
-      ↓
 HuggingFaceEmbeddings → 384-dim vectors
       ↓
-FAISS.from_documents() → index stored in session memory
+ChromaDB collection `doc_<hash>` saved to ./chroma_db/
+```
+
+---
+
+## How ChromaDB Is Used
+
+- **One collection per PDF**, named from the PDF's content hash, so documents never mix and duplicates are detected automatically.
+- **Each chunk is stored as:** an ID, its 384-dim embedding, the chunk text, and metadata (`page`, `source`).
+- **Each collection also stores** `filename`, `pages`, `chunks` and `created_at`, which powers the "Saved documents" list in the sidebar.
+- **Integrity check:** on load, the stored vector count must equal the expected chunk count; a half-finished ingest is detected and rebuilt.
+- **On disk:** `chroma_db/chroma.sqlite3` (text + metadata) plus an HNSW index folder per collection.
+
+Change the storage location with an environment variable:
+
+```
+export CHROMA_PERSIST_DIR=/path/to/store
 ```
 
 ---
 
 ## Run Locally
 
-```bash
+```
 git clone https://github.com/anchalKatira/agentic-rag
 cd agentic-rag
 pip install -r requirements.txt
-streamlit run app.py
-```
-
-Add your Groq key:
-```bash
 export GROQ_API_KEY="gsk_your_key_here"   # Mac/Linux
 set GROQ_API_KEY=gsk_your_key_here        # Windows
+streamlit run app.py
 ```
 
 Get a free key at [console.groq.com](https://console.groq.com) — no credit card needed.
 
 ---
 
+## Evaluation
+
+Edit `evaluation/sample_dataset.json` with questions about your PDF:
+
+```json
+[
+  {
+    "question": "What is gradient descent?",
+    "expected_keywords": ["optimization", "loss"],
+    "expected_pages": [3]
+  }
+]
+```
+
+Retrieval-only (no API key needed):
+
+```
+python -m evaluation.evaluate --pdf notes.pdf --dataset evaluation/sample_dataset.json
+```
+
+Full agent run (needs `GROQ_API_KEY`):
+
+```
+python -m evaluation.evaluate --pdf notes.pdf --dataset my_qa.json --agent --out report.json
+```
+
+| Metric | Meaning |
+| --- | --- |
+| `hit_rate@k` | % of questions where a top-k chunk contains an expected keyword / page |
+| `mrr` | Mean reciprocal rank of the first correct chunk (1.0 = always first) |
+| `answer_keyword_hit_rate` | % of final answers that mention an expected keyword |
+| `retry_rate` / `fallback_rate` | How often the self-correction loop / fallback fired |
+| `avg_latency_s` | Average seconds per question |
+
+---
+
 ## PDF Requirements
 
-Works with **text-based PDFs** — documents created digitally where text can be selected and copied.
-
-Does **not** support scanned PDFs (image-based documents). To check: open the PDF and try to highlight text. If you can → it works. If you cannot → it is scanned.
+The app works with text-based PDFs — documents created digitally where text can be selected and copied. It does not support scanned PDFs (image-based documents). To check: open the PDF and try to highlight text with your cursor. If you can → it will work.
 
 ---
 
 ## Key Design Decisions
 
-**Why always retrieve instead of routing?**
-The user uploaded a PDF to ask questions about it. Routing questions to the LLM's general knowledge defeats the purpose. Every question goes through FAISS — the grader decides if the result is useful.
+**Why always retrieve instead of routing?** The user uploaded a PDF specifically to ask questions about it. Sending questions to the LLM's general knowledge defeats the purpose. Every question goes through the vector store — the grader then decides if the chunks are useful.
 
-**Why a grader instead of using FAISS scores?**
-FAISS distance measures vector similarity, not semantic relevance. A chunk can be close in vector space but still not answer the question. The LLM grader does true relevance assessment.
+**Why a grader node instead of just using similarity scores?** Vector distance measures similarity, not whether a chunk actually answers the question. The LLM grader does a true relevance assessment.
 
-**Why rephrase instead of retrying the same query?**
-Same query → same chunks. The rephrase node converts conversational language to technical vocabulary matching the document's text — making the retry genuinely different.
+**Why rephrase instead of retrying with the same query?** Re-running the same query returns the same chunks. The rephrase node converts conversational language to technical vocabulary that better matches the document, making the second retrieval genuinely different.
 
-**Why answer from chunks even in fallback?**
-A hard refusal is frustrating when partial information exists. The fallback node uses the RAG prompt on whatever chunks were retrieved — giving the user something useful even when the grader wasn't satisfied.
+**Why ChromaDB over FAISS?** FAISS is an in-memory index: it vanishes on restart and doesn't store text or metadata. ChromaDB persists vectors, text and metadata together, so documents are embedded once and reused.
 
-**Why MemorySaver over a database?**
-Single-user portfolio app — in-memory state is sufficient per session. For multi-user production with persistence across restarts, `SqliteSaver` or `PostgresSaver` would replace it.
+**Why a content hash for document IDs?** It makes ingestion idempotent — the same file always maps to the same collection, so duplicates are never re-embedded.
+
+**Why one collection per document?** Hard isolation: a question about one PDF can never retrieve chunks from another.
+
+**Why MemorySaver over a database?** For a single-user portfolio app, in-memory checkpointing is enough. For multi-user production, `SqliteSaver` or `PostgresSaver` is the upgrade path.
 
 ---
 
-## Comparison with DocChat
+## Deployment Note
 
-| | DocChat (Week 1) | Agentic RAG (Week 2) |
-|---|---|---|
-| Pipeline | Fixed chain | LangGraph state machine |
-| Quality check | None | Grader node |
-| Bad retrieval | Hallucinates | Rephrases + retries |
-| Memory | ConversationBufferWindowMemory | LangGraph MemorySaver |
-| Trace | Hidden | Visible per answer |
+On Streamlit Community Cloud the filesystem is ephemeral: `chroma_db/` survives normal reruns but is cleared on redeploy or after the app is reclaimed. For durable persistence in production, mount a volume or switch to a hosted Chroma server.
+
+---
+
+## Roadmap
+
+- Hybrid search (BM25 + vectors) and a reranker
+- `SqliteSaver` for chat memory that survives restarts
+- Multi-document Q&A across collections
+- Ragas-style LLM-judged faithfulness metrics in `evaluation/`
+
+---
+
+*Built as Week 2 of a structured AI/ML project series — directly replicating patterns from the Oracle AI Developer Hub enterprise RAG systems.*

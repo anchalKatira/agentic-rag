@@ -1,0 +1,11 @@
+[
+  {
+    "question": "EDIT ME: a question your PDF can answer",
+    "expected_keywords": ["a word or phrase that appears in the right chunk"]
+  },
+  {
+    "question": "EDIT ME: another question, this one with a known page",
+    "expected_keywords": ["another expected term"],
+    "expected_pages": [0]
+  }
+]
