@@ -41,12 +41,9 @@ agentic-rag/
 │   ├── embeddings.py       # cached MiniLM embedding model
 │   ├── ingestion.py        # PDF → chunks → ChromaDB
 │   └── agent.py            # LangGraph nodes, edges, run_agent()
-├── db/
-│   └── chroma_store.py     # persistent ChromaDB wrapper
-└── evaluation/
-    ├── metrics.py          # hit rate, MRR, answer keyword hit
-    ├── evaluate.py         # CLI evaluation runner
-    └── sample_dataset.json # template Q/A set — edit with your own
+└── db/
+    └── chroma_store.py     # persistent ChromaDB wrapper
+
 ```
 
 ---
@@ -155,41 +152,6 @@ Get a free key at [console.groq.com](https://console.groq.com) — no credit car
 
 ---
 
-## Evaluation
-
-Edit `evaluation/sample_dataset.json` with questions about your PDF:
-
-```json
-[
-  {
-    "question": "What is gradient descent?",
-    "expected_keywords": ["optimization", "loss"],
-    "expected_pages": [3]
-  }
-]
-```
-
-Retrieval-only (no API key needed):
-
-```
-python -m evaluation.evaluate --pdf notes.pdf --dataset evaluation/sample_dataset.json
-```
-
-Full agent run (needs `GROQ_API_KEY`):
-
-```
-python -m evaluation.evaluate --pdf notes.pdf --dataset my_qa.json --agent --out report.json
-```
-
-| Metric | Meaning |
-| --- | --- |
-| `hit_rate@k` | % of questions where a top-k chunk contains an expected keyword / page |
-| `mrr` | Mean reciprocal rank of the first correct chunk (1.0 = always first) |
-| `answer_keyword_hit_rate` | % of final answers that mention an expected keyword |
-| `retry_rate` / `fallback_rate` | How often the self-correction loop / fallback fired |
-| `avg_latency_s` | Average seconds per question |
-
----
 
 ## PDF Requirements
 
@@ -226,5 +188,4 @@ On Streamlit Community Cloud the filesystem is ephemeral: `chroma_db/` survives 
 - Hybrid search (BM25 + vectors) and a reranker
 - `SqliteSaver` for chat memory that survives restarts
 - Multi-document Q&A across collections
-- Ragas-style LLM-judged faithfulness metrics in `evaluation/`
 
